@@ -1,0 +1,550 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'http://localhost:8080/api',
+  headers: { 'Content-Type': 'application/json' },
+});
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('workflows');
+
+  // Data states
+  const [workflows, setWorkflows] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [history, setHistory] = useState([]);
+
+  // Workflow Form & Edit states
+  const [wfName, setWfName] = useState('');
+  const [wfDesc, setWfDesc] = useState('');
+  const [editingWfId, setEditingWfId] = useState(null);
+  const [editWfName, setEditWfName] = useState('');
+  const [editWfDesc, setEditWfDesc] = useState('');
+
+  // Request Form & Edit states
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const [submittedBy, setSubmittedBy] = useState('');
+  const [amount, setAmount] = useState('');
+  const [editingReqId, setEditingReqId] = useState(null);
+  const [editSubmittedBy, setEditSubmittedBy] = useState('');
+  const [editAmount, setEditAmount] = useState('');
+
+  // Task & Action states
+  const [taskRole, setTaskRole] = useState('MANAGER');
+  const [comments, setComments] = useState('');
+  const [selectedInstanceId, setSelectedInstanceId] = useState('');
+
+  // Notification state
+  const [status, setStatus] = useState({ text: '', type: '' });
+
+  useEffect(() => {
+    loadWorkflows();
+    loadRequests();
+  }, []);
+
+  const showStatus = (text, type = 'success') => {
+    setStatus({ text, type });
+    setTimeout(() => setStatus({ text: '', type: '' }), 4000);
+  };
+
+  // ================= WORKFLOW CRUD =================
+  const loadWorkflows = async () => {
+    try {
+      const res = await api.get('/workflows');
+      setWorkflows(res.data);
+    } catch (err) {
+      showStatus('Cannot connect to backend server (Port 8080). Ensure Spring Boot is running.', 'danger');
+    }
+  };
+
+  const handleCreateWorkflow = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/workflows', {
+        name: wfName,
+        description: wfDesc,
+        steps: [
+          { stepName: 'Manager Review', stepOrder: 1, assignedRole: 'MANAGER', stepType: 'APPROVAL' }
+        ]
+      });
+      showStatus('Workflow created successfully!');
+      setWfName('');
+      setWfDesc('');
+      loadWorkflows();
+    } catch (err) {
+      showStatus('Error creating workflow: ' + (err.response?.data?.message || err.message), 'danger');
+    }
+  };
+
+  const handlePublishWorkflow = async (id) => {
+    try {
+      await api.put(`/workflows/${id}/publish`);
+      showStatus(`Workflow #${id} published successfully!`);
+      loadWorkflows();
+    } catch (err) {
+      showStatus('Error publishing workflow', 'danger');
+    }
+  };
+
+  const startEditWorkflow = (wf) => {
+    setEditingWfId(wf.id);
+    setEditWfName(wf.name);
+    setEditWfDesc(wf.description || '');
+  };
+
+  const handleUpdateWorkflow = async (id) => {
+    try {
+      await api.put(`/workflows/${id}`, {
+        name: editWfName,
+        description: editWfDesc
+      });
+      showStatus(`Workflow #${id} updated successfully!`);
+      setEditingWfId(null);
+      loadWorkflows();
+    } catch (err) {
+      showStatus('Error updating workflow', 'danger');
+    }
+  };
+
+  const handleDeleteWorkflow = async (id) => {
+    if (!window.confirm(`Delete workflow #${id}?`)) return;
+    try {
+      await api.delete(`/workflows/${id}`);
+      showStatus(`Workflow #${id} deleted successfully!`);
+      loadWorkflows();
+    } catch (err) {
+      showStatus('Error deleting workflow', 'danger');
+    }
+  };
+
+  // ================= REQUEST CRUD =================
+  const loadRequests = async () => {
+    try {
+      const res = await api.get('/requests');
+      setRequests(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleSubmitRequest = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/requests/submit', {
+        workflowId: Number(selectedWorkflowId),
+        submittedBy,
+        amount: Number(amount)
+      });
+      showStatus('Request submitted and routed through engine!');
+      setSubmittedBy('');
+      setAmount('');
+      loadRequests();
+    } catch (err) {
+      showStatus('Error submitting request: ' + (err.response?.data?.message || err.message), 'danger');
+    }
+  };
+
+  const startEditRequest = (req) => {
+    setEditingReqId(req.id);
+    setEditSubmittedBy(req.submittedBy);
+    setEditAmount(req.amount);
+  };
+
+  const handleUpdateRequest = async (id) => {
+    try {
+      await api.put(`/requests/${id}`, {
+        submittedBy: editSubmittedBy,
+        amount: Number(editAmount)
+      });
+      showStatus(`Request #${id} updated successfully!`);
+      setEditingReqId(null);
+      loadRequests();
+    } catch (err) {
+      showStatus('Error updating request', 'danger');
+    }
+  };
+
+  const handleDeleteRequest = async (id) => {
+    if (!window.confirm(`Delete request #${id}?`)) return;
+    try {
+      await api.delete(`/requests/${id}`);
+      showStatus(`Request #${id} deleted successfully!`);
+      loadRequests();
+    } catch (err) {
+      showStatus('Error deleting request', 'danger');
+    }
+  };
+
+  // ================= TASK ACTIONS & HISTORY =================
+  const loadTasks = async (role) => {
+    try {
+      const res = await api.get(`/tasks/pending/${role}`);
+      setTasks(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleTaskAction = async (taskId, action) => {
+    try {
+      await api.post(`/tasks/${taskId}/${action}`, {
+        performedBy: 'Admin User',
+        comments: comments || 'Processed via Control Center'
+      });
+      showStatus(`Task #${taskId} ${action}ed successfully!`);
+      setComments('');
+      loadTasks(taskRole);
+      loadRequests();
+    } catch (err) {
+      showStatus('Error executing task action', 'danger');
+    }
+  };
+
+  const loadHistory = async (instId) => {
+    if (!instId) return;
+    try {
+      const res = await api.get(`/tasks/history/${instId}`);
+      setHistory(res.data);
+      setSelectedInstanceId(instId);
+    } catch (err) { console.error(err); }
+  };
+
+  return (
+    <div style={styles.pageWrapper}>
+      {/* COLORFUL GRADIENT NAVBAR */}
+      <nav style={styles.navbar}>
+        <div style={styles.navContainer}>
+          <div style={styles.brand}>
+            <span style={styles.brandIcon}>⚡</span>
+            <span style={styles.brandText}>Workflow Automation Engine</span>
+          </div>
+          <div style={styles.navLinks}>
+            <button
+              style={activeTab === 'workflows' ? styles.activeNavLink : styles.navLink}
+              onClick={() => setActiveTab('workflows')}>
+              ⚙️ Workflows
+            </button>
+            <button
+              style={activeTab === 'requests' ? styles.activeNavLink : styles.navLink}
+              onClick={() => setActiveTab('requests')}>
+              📥 Submissions
+            </button>
+            <button
+              style={activeTab === 'tasks' ? styles.activeNavLink : styles.navLink}
+              onClick={() => { setActiveTab('tasks'); loadTasks(taskRole); }}>
+              ✅ Approvals
+            </button>
+            <button
+              style={activeTab === 'history' ? styles.activeNavLink : styles.navLink}
+              onClick={() => setActiveTab('history')}>
+              📊 Audit Logs
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* NOTIFICATION BANNER */}
+      {status.text && (
+        <div style={{ ...styles.alertBox, backgroundColor: status.type === 'danger' ? '#fee2e2' : '#dcfce7', color: status.type === 'danger' ? '#991b1b' : '#166534' }}>
+          {status.text}
+        </div>
+      )}
+
+      {/* MAIN CONTAINER CONTENT */}
+      <div style={styles.container}>
+        {/* WORKFLOWS TAB */}
+        {activeTab === 'workflows' && (
+          <div style={styles.gridTwoCols}>
+            <div style={styles.card}>
+              <h3 style={styles.cardTitle}>➕ Create Workflow</h3>
+              <form onSubmit={handleCreateWorkflow} style={styles.form}>
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Workflow Name</label>
+                  <input style={styles.input} placeholder="e.g. Travel Expense Approval" value={wfName} onChange={e => setWfName(e.target.value)} required />
+                </div>
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Description</label>
+                  <textarea style={styles.textarea} placeholder="Describe the workflow purpose..." value={wfDesc} onChange={e => setWfDesc(e.target.value)} />
+                </div>
+                <button type="submit" style={styles.primaryButton}>Save Workflow</button>
+              </form>
+            </div>
+
+            <div style={styles.card}>
+              <div style={styles.flexBetween}>
+                <h3 style={styles.cardTitle}>📋 Configured Workflows</h3>
+                <span style={styles.badgeCount}>{workflows.length} Total</span>
+              </div>
+              <div style={styles.listContainer}>
+                {workflows.length === 0 ? (
+                  <p style={styles.mutedText}>No workflows created yet.</p>
+                ) : (
+                  workflows.map(wf => (
+                    <div key={wf.id} style={styles.listItem}>
+                      {editingWfId === wf.id ? (
+                        <div style={styles.editForm}>
+                          <input style={styles.input} value={editWfName} onChange={e => setEditWfName(e.target.value)} />
+                          <textarea style={styles.textareaSmall} value={editWfDesc} onChange={e => setEditWfDesc(e.target.value)} />
+                          <div style={styles.buttonRow}>
+                            <button style={styles.successBtn} onClick={() => handleUpdateWorkflow(wf.id)}>Save</button>
+                            <button style={styles.secondaryBtn} onClick={() => setEditingWfId(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={styles.flexBetween}>
+                          <div>
+                            <div style={styles.rowTitleArea}>
+                              <strong style={styles.itemTitle}>{wf.name}</strong>
+                              <span style={{ ...styles.statusPill, backgroundColor: wf.published ? '#dcfce7' : '#fef9c3', color: wf.published ? '#166534' : '#854d0e' }}>
+                                {wf.published ? 'Published' : 'Draft'}
+                              </span>
+                            </div>
+                            <p style={styles.itemSub}>{wf.description || 'No description provided'}</p>
+                          </div>
+                          <div style={styles.actionGroup}>
+                            {!wf.published && (
+                              <button style={styles.publishBtn} onClick={() => handlePublishWorkflow(wf.id)}>Publish</button>
+                            )}
+                            <button style={styles.editBtn} onClick={() => startEditWorkflow(wf)}>✏️</button>
+                            <button style={styles.deleteBtn} onClick={() => handleDeleteWorkflow(wf.id)}>🗑️</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUBMISSIONS TAB */}
+        {activeTab === 'requests' && (
+          <div style={styles.gridTwoCols}>
+            <div style={styles.card}>
+              <h3 style={styles.cardTitle}>📥 Submit New Request</h3>
+              <form onSubmit={handleSubmitRequest} style={styles.form}>
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Select Published Workflow</label>
+                  <select style={styles.input} value={selectedWorkflowId} onChange={e => setSelectedWorkflowId(e.target.value)} required>
+                    <option value="">-- Choose Workflow --</option>
+                    {workflows.filter(w => w.published).map(w => (
+                      <option key={w.id} value={w.id}>{w.name} (ID: {w.id})</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Submitted By</label>
+                  <input style={styles.input} placeholder="e.g. John Doe" value={submittedBy} onChange={e => setSubmittedBy(e.target.value)} required />
+                </div>
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Amount ($)</label>
+                  <input style={styles.input} type="number" placeholder="e.g. 6000" value={amount} onChange={e => setAmount(e.target.value)} required />
+                </div>
+                <button type="submit" style={styles.primaryButton}>Run Engine</button>
+              </form>
+            </div>
+
+            <div style={styles.card}>
+              <div style={styles.flexBetween}>
+                <h3 style={styles.cardTitle}>📊 Submitted Requests</h3>
+                <span style={styles.badgeCount}>{requests.length} Total</span>
+              </div>
+              <div style={styles.tableWrapper}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Wf</th>
+                      <th>Submitted By</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requests.length === 0 ? (
+                      <tr><td colSpan="6" style={styles.mutedCenter}>No requests found.</td></tr>
+                    ) : (
+                      requests.map(req => (
+                        <tr key={req.id}>
+                          <td><strong>#{req.id}</strong></td>
+                          <td>{req.workflowId}</td>
+                          <td>
+                            {editingReqId === req.id ? (
+                              <input style={styles.inputTable} value={editSubmittedBy} onChange={e => setEditSubmittedBy(e.target.value)} />
+                            ) : req.submittedBy}
+                          </td>
+                          <td>
+                            {editingReqId === req.id ? (
+                              <input style={styles.inputTable} type="number" value={editAmount} onChange={e => setEditAmount(e.target.value)} />
+                            ) : `$${req.amount}`}
+                          </td>
+                          <td><span style={styles.statusBadge}>{req.status}</span></td>
+                          <td>
+                            {editingReqId === req.id ? (
+                              <div style={styles.actionGroup}>
+                                <button style={styles.successBtnSmall} onClick={() => handleUpdateRequest(req.id)}>✔</button>
+                                <button style={styles.secondaryBtnSmall} onClick={() => setEditingReqId(null)}>✖</button>
+                              </div>
+                            ) : (
+                              <div style={styles.actionGroup}>
+                                <button style={styles.infoBtnSmall} onClick={() => { setActiveTab('history'); loadHistory(req.id); }}>Log</button>
+                                <button style={styles.editBtnSmall} onClick={() => startEditRequest(req)}>✏️</button>
+                                <button style={styles.deleteBtnSmall} onClick={() => handleDeleteRequest(req.id)}>🗑️</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* APPROVALS TAB */}
+        {activeTab === 'tasks' && (
+          <div style={styles.card}>
+            <div style={styles.flexBetween}>
+              <h3 style={styles.cardTitle}>✅ Pending Approvals</h3>
+              <div style={styles.filterGroup}>
+                <label style={styles.labelInline}>Filter Role:</label>
+                <select style={styles.selectSmall} value={taskRole} onChange={e => { setTaskRole(e.target.value); loadTasks(e.target.value); }}>
+                  <option value="MANAGER">MANAGER</option>
+                  <option value="HR">HR</option>
+                  <option value="DIRECTOR">DIRECTOR</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={styles.listContainer}>
+              {tasks.length === 0 ? (
+                <p style={styles.mutedText}>No pending tasks found for role: <strong>{taskRole}</strong>.</p>
+              ) : (
+                tasks.map(task => (
+                  <div key={task.id} style={styles.taskCard}>
+                    <div>
+                      <div style={styles.rowTitleArea}>
+                        <span style={styles.taskBadge}>Task #{task.id}</span>
+                        <span style={styles.subText}>Instance ID: <strong>{task.instanceId}</strong></span>
+                        <span style={styles.roleBadge}>{task.assignedRole}</span>
+                      </div>
+                      <input style={styles.inputComment} placeholder="Add review comments..." value={comments} onChange={e => setComments(e.target.value)} />
+                    </div>
+                    <div style={styles.buttonGroup}>
+                      <button style={styles.approveBtn} onClick={() => handleTaskAction(task.id, 'approve')}>Approve</button>
+                      <button style={styles.rejectBtn} onClick={() => handleTaskAction(task.id, 'reject')}>Reject</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* AUDIT LOGS TAB */}
+        {activeTab === 'history' && (
+          <div style={styles.card}>
+            <div style={styles.flexBetween}>
+              <h3 style={styles.cardTitle}>📊 Workflow Audit History</h3>
+              <div style={styles.searchRow}>
+                <input style={styles.inputSearch} placeholder="Enter Instance ID" value={selectedInstanceId} onChange={e => setSelectedInstanceId(e.target.value)} />
+                <button style={styles.primaryButtonSmall} onClick={() => loadHistory(selectedInstanceId)}>Load Logs</button>
+              </div>
+            </div>
+            <div style={styles.tableWrapper}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Action</th>
+                    <th>Performed By</th>
+                    <th>Comments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.length === 0 ? (
+                    <tr><td colSpan="4" style={styles.mutedCenter}>Enter an Instance ID to inspect timeline audit records.</td></tr>
+                  ) : (
+                    history.map((h, i) => (
+                      <tr key={i}>
+                        <td style={styles.timestampText}>{new Date(h.actionTime).toLocaleString()}</td>
+                        <td><span style={styles.actionPill}>{h.action}</span></td>
+                        <td><strong>{h.performedBy}</strong></td>
+                        <td style={styles.commentText}>{h.comments}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* FOOTER */}
+      <footer style={styles.footer}>
+        <p style={styles.footerText}>⚡ Workflow Automation Engine &copy; {new Date().getFullYear()} | Powered by Spring Boot &amp; React</p>
+      </footer>
+    </div>
+  );
+}
+
+const styles = {
+  pageWrapper: { minHeight: '100vh', backgroundColor: '#f1f5f9', display: 'flex', flexDirection: 'column', fontFamily: 'Inter, system-ui, sans-serif' },
+  navbar: { background: 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)', padding: '16px 24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' },
+  navContainer: { maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' },
+  brand: { display: 'flex', alignItems: 'center', gap: '10px' },
+  brandIcon: { fontSize: '26px' },
+  brandText: { color: '#ffffff', fontSize: '20px', fontWeight: '800', letterSpacing: '0.5px' },
+  navLinks: { display: 'flex', gap: '10px', flexWrap: 'wrap' },
+  navLink: { backgroundColor: 'rgba(255, 255, 255, 0.15)', color: '#ffffff', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', transition: 'background 0.2s' },
+  activeNavLink: { backgroundColor: '#ffffff', color: '#4f46e5', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '14px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' },
+  alertBox: { maxWidth: '1160px', margin: '20px auto 0 auto', padding: '12px 20px', borderRadius: '8px', textAlign: 'center', fontWeight: '600', width: '90%', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' },
+  container: { maxWidth: '1200px', width: '95%', margin: '30px auto', flex: '1', display: 'flex', flexDirection: 'column', gap: '24px' },
+  gridTwoCols: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '24px' },
+  card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05)', border: '1px solid #e2e8f0' },
+  cardTitle: { fontSize: '18px', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' },
+  form: { display: 'flex', flexDirection: 'column', gap: '16px' },
+  inputGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  label: { fontSize: '13px', fontWeight: '600', color: '#475569' },
+  input: { padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none' },
+  textarea: { padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', minHeight: '90px', outline: 'none' },
+  primaryButton: { padding: '12px', background: 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '15px', boxShadow: '0 4px 6px rgba(79, 70, 229, 0.2)' },
+  flexBetween: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
+  badgeCount: { backgroundColor: '#e0e7ff', color: '#4f46e5', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700' },
+  listContainer: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  listItem: { padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc' },
+  rowTitleArea: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' },
+  itemTitle: { fontSize: '15px', color: '#0f172a' },
+  itemSub: { fontSize: '13px', color: '#64748b', margin: 0 },
+  statusPill: { padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase' },
+  actionGroup: { display: 'flex', gap: '6px', alignItems: 'center' },
+  publishBtn: { backgroundColor: '#10b981', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' },
+  editBtn: { backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer' },
+  deleteBtn: { backgroundColor: '#fee2e2', border: '1px solid #fca5a5', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer' },
+  mutedText: { color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '20px' },
+  tableWrapper: { overflowX: 'auto' },
+  table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '14px' },
+  mutedCenter: { textAlign: 'center', color: '#94a3b8', fontStyle: 'italic', padding: '30px' },
+  statusBadge: { backgroundColor: '#e0f2fe', color: '#0369a1', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '700' },
+  taskCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', gap: '15px', flexWrap: 'wrap' },
+  taskBadge: { backgroundColor: '#e0e7ff', color: '#4f46e5', padding: '2px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '700' },
+  subText: { fontSize: '13px', color: '#475569' },
+  roleBadge: { backgroundColor: '#fef3c7', color: '#d97706', padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' },
+  inputComment: { width: '100%', padding: '8px 12px', marginTop: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none' },
+  buttonGroup: { display: 'flex', gap: '8px' },
+  approveBtn: { backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700' },
+  rejectBtn: { backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700' },
+  filterGroup: { display: 'flex', alignItems: 'center', gap: '8px' },
+  labelInline: { fontSize: '13px', fontWeight: '600', color: '#475569' },
+  selectSmall: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', backgroundColor: '#fff' },
+  searchRow: { display: 'flex', gap: '8px' },
+  inputSearch: { padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', width: '160px', outline: 'none' },
+  primaryButtonSmall: { backgroundColor: '#4f46e5', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' },
+  timestampText: { fontSize: '13px', color: '#64748b' },
+  actionPill: { backgroundColor: '#eef2ff', color: '#4f46e5', padding: '3px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: '700' },
+  commentText: { color: '#334155', fontSize: '13px' },
+  footer: { backgroundColor: '#ffffff', borderTop: '1px solid #e2e8f0', padding: '20px', textAlign: 'center', marginTop: 'auto' },
+  footerText: { color: '#64748b', fontSize: '14px', margin: 0 }
+};
