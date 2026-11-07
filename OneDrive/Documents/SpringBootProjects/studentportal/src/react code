@@ -1,0 +1,498 @@
+import { useCallback, useEffect, useState } from "react";
+import "./App.css";
+
+// Change 8802 if your Spring Boot application uses another port.
+const API = "http://localhost:8802/student";
+
+const emptyForm = {
+  fname: "",
+  lname: "",
+  age: "",
+  total_marks: "",
+};
+
+function getStudentId(student) {
+  return student?.id ?? student?.Id ?? student?.studentId ?? student?.student_id ?? null;
+}
+
+function getStudentMarks(student) {
+  return student?.total_marks ?? student?.totalMarks ?? "";
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
+  });
+
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `HTTP ${response.status}: ${responseText || response.statusText}`
+    );
+  }
+
+  if (!responseText) return null;
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return responseText;
+  }
+}
+
+function App() {
+  const [students, setStudents] = useState([]);
+  const [form, setForm] = useState(emptyForm);
+  const [editId, setEditId] = useState(null);
+  const [searchId, setSearchId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  // GET: Load all students from the backend/database.
+  const loadStudents = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await request(`${API}/getallStudent`);
+      if (Array.isArray(data)) {
+        setStudents(data);
+      } else if (data && typeof data === "object") {
+        setStudents([data]);
+      } else {
+        setStudents([]);
+      }
+    } catch (err) {
+      setError(`Failed to fetch students: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStudents();
+  }, [loadStudents]);
+
+  function handleChange(event) {
+    const { name, value } = event.target;
+    setForm((previous) => ({ ...previous, [name]: value }));
+  }
+
+  // POST: Add a student. PUT: Update the complete student record.
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    if (
+      !form.fname.trim() ||
+      !form.lname.trim() ||
+      form.age === "" ||
+      form.total_marks === ""
+    ) {
+      setError("Please fill in all student fields.");
+      return;
+    }
+
+    const payload = {
+      fname: form.fname.trim(),
+      lname: form.lname.trim(),
+      age: Number(form.age),
+      total_marks: Number(form.total_marks),
+    };
+
+    if (
+      !Number.isFinite(payload.age) ||
+      !Number.isFinite(payload.total_marks) ||
+      payload.age < 0 ||
+      payload.total_marks < 0
+    ) {
+      setError("Age and marks must be valid non-negative numbers.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (editId !== null) {
+        await request(`${API}/update/${editId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        setMessage("Student updated successfully!");
+      } else {
+        await request(`${API}/post1`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessage("Student added successfully!");
+      }
+
+      setForm({ ...emptyForm });
+      setEditId(null);
+      await loadStudents();
+    } catch (err) {
+      setError(`Unable to save student: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleEdit(student) {
+    const id = getStudentId(student);
+    if (id == null) {
+      setError("Student ID was not found. Check the ID field returned by your API.");
+      return;
+    }
+
+    setEditId(id);
+    setForm({
+      fname: student.fname ?? "",
+      lname: student.lname ?? "",
+      age: student.age ?? "",
+      total_marks: getStudentMarks(student),
+    });
+    setError("");
+    setMessage(`Editing student ${id}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEdit() {
+    setEditId(null);
+    setForm({ ...emptyForm });
+    setMessage("");
+    setError("");
+  }
+
+  // DELETE: Send DELETE request to Spring Boot so the database row is deleted.
+  async function handleDelete(student) {
+    const id = getStudentId(student);
+    if (id == null) {
+      setError("Student ID was not found. Cannot delete this record.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete student ${id}?`
+    );
+    if (!confirmed) return;
+
+    setError("");
+    setMessage("");
+    setLoading(true);
+
+    try {
+      await request(`${API}/delete/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+
+      setStudents((previous) =>
+        previous.filter(
+          (item) => String(getStudentId(item)) !== String(id)
+        )
+      );
+
+      if (String(editId) === String(id)) {
+        setEditId(null);
+        setForm({ ...emptyForm });
+      }
+
+      setMessage(`Student ${id} deleted successfully!`);
+      await loadStudents();
+    } catch (err) {
+      setError(`Unable to delete student: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Search: Fetch one student by ID.
+  async function handleSearch(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    if (!searchId.trim()) {
+      await loadStudents();
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const student = await request(
+        `${API}/getStudentById/${encodeURIComponent(searchId.trim())}`
+      );
+
+      if (Array.isArray(student)) {
+        setStudents(student);
+      } else if (student && typeof student === "object") {
+        setStudents([student]);
+      } else {
+        setStudents([]);
+        setMessage("No matching student found.");
+      }
+    } catch (err) {
+      setStudents([]);
+      setError(`Search failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+const handlePatch = async (id, newName) => {
+  try {
+    const response = await fetch(
+      `${API}/partialUpdate/${id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          fname: newName
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    const result = await response.json();
+
+    alert("Student updated successfully!");
+    console.log(result);
+
+    await loadStudents();
+
+  } catch (error) {
+    console.error("PATCH failed:", error);
+    alert("PATCH failed: " + error.message);
+  }
+};
+  return (
+    <main className="app">
+      <header className="hero">
+        <div className="hero-icon">🎓</div>
+        <h1>Student Management System</h1>
+        <p>React.js + Spring Boot + MySQL</p>
+        <span className="status">REST API Student Dashboard</span>
+      </header>
+
+      {error && (
+        <div className="alert error" role="alert">
+          <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="alert success" role="status">
+          {message}
+        </div>
+      )}
+
+      <section className="panel">
+        <h2>{editId !== null ? "✏️ Edit Student" : "➕ Add Student"}</h2>
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-grid">
+            <label>
+              First Name
+              <input
+                name="fname"
+                value={form.fname}
+                onChange={handleChange}
+                placeholder="Enter first name"
+                required
+              />
+            </label>
+
+            <label>
+              Last Name
+              <input
+                name="lname"
+                value={form.lname}
+                onChange={handleChange}
+                placeholder="Enter last name"
+                required
+              />
+            </label>
+
+            <label>
+              Age
+              <input
+                type="number"
+                name="age"
+                value={form.age}
+                onChange={handleChange}
+                placeholder="Enter age"
+                min="0"
+                required
+              />
+            </label>
+
+            <label>
+              Total Marks
+              <input
+                type="number"
+                name="total_marks"
+                value={form.total_marks}
+                onChange={handleChange}
+                placeholder="Enter total marks"
+                min="0"
+                required
+              />
+            </label>
+          </div>
+
+          <div className="actions">
+            <button className="primary" type="submit" disabled={loading}>
+              {loading
+                ? "Please wait..."
+                : editId !== null
+                ? "Update Student"
+                : "Add Student"}
+            </button>
+
+            {editId !== null && (
+              <button
+                className="secondary"
+                type="button"
+                onClick={cancelEdit}
+                disabled={loading}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>📚 Student Records</h2>
+            <p>View and manage your student details.</p>
+          </div>
+
+          <button
+            className="secondary"
+            type="button"
+            onClick={loadStudents}
+            disabled={loading}
+          >
+            ↻ Refresh
+          </button>
+        </div>
+
+        <form className="search-form" onSubmit={handleSearch}>
+          <input
+            type="number"
+            min="0"
+            value={searchId}
+            onChange={(event) => setSearchId(event.target.value)}
+            placeholder="Search by student ID"
+          />
+
+          <button className="primary" type="submit" disabled={loading}>
+            Search
+          </button>
+
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => {
+              setSearchId("");
+              loadStudents();
+            }}
+            disabled={loading}
+          >
+            Show All
+          </button>
+        </form>
+
+        {loading && <p className="loading">Loading student records...</p>}
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>First Name</th>
+                <th>Last Name</th>
+                <th>Age</th>
+                <th>Total Marks</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {!loading && students.length === 0 && (
+                <tr>
+                  <td colSpan="6" className="empty">
+                    No student records found.
+                  </td>
+                </tr>
+              )}
+
+              {students.map((student, index) => {
+                const id = getStudentId(student);
+
+                return (
+                  <tr key={id ?? index}>
+                    <td>{id ?? "N/A"}</td>
+                    <td>{student.fname ?? "N/A"}</td>
+                    <td>{student.lname ?? "N/A"}</td>
+                    <td>{student.age ?? "N/A"}</td>
+                    <td>{getStudentMarks(student) ?? "N/A"}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="edit-btn"
+                          type="button"
+                          onClick={() => handleEdit(student)}
+                          disabled={loading}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+  className="patch-btn"
+  type="button"
+  onClick={() => handlePatch(student.id, student.fname)}
+  disabled={loading}
+>
+  PATCH Name
+</button>
+
+                        <button
+                          className="delete-btn"
+                          type="button"
+                          onClick={() => handleDelete(student)}
+                          disabled={loading}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        <p>Student Management System · React + Spring Boot</p>
+      </footer>
+    </main>
+  );
+}
+
+export default App;
